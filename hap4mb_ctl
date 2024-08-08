@@ -141,7 +141,13 @@ function finish ()
       echo "bridge=${DHCP_IFACE}"                   >> ${HAP_HPD_CONF}
     fi
     echo "ssid=${WLAN_SSID}"                        >> ${HAP_HPD_CONF}
-    echo "wpa_passphrase=${WLAN_PASS}"              >> ${HAP_HPD_CONF}
+#   echo "wpa_passphrase=${WLAN_PASS}"              >> ${HAP_HPD_CONF}
+    #   Tried this to see if it overcomes "AP-STA-POSSIBLE-PSK-MISMATCH"
+    #   error that occurs sometimes.  Doesn't help but I guess it
+    #   avoids having password in temporary file left on disk.
+    echo "$(wpa_passphrase ${WLAN_SSID} ${WLAN_PASS} | \
+          grep '[[:space:]]psk='                     | \
+          sed -e 's/[[:space:]]*psk=/wpa_psk=/')"   >> ${HAP_HPD_CONF}
     cat $(ExtractRelevantLines ${HAP_CONF} HOSTAPD) >> ${HAP_HPD_CONF}
     sync
 
@@ -202,4 +208,3 @@ function finish ()
     [ "${HAP_DEBUG}" = "1" ] && nft list ruleset
 
     finish 0
-

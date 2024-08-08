@@ -19,6 +19,16 @@ The key change is that pre-up, post-up, and post-down call the
 monitor script (/usr/local/bin/hap4mb_mon).
 
 
+    Packages Required.
+
+arping
+bridge-utils
+dnsmasq
+hostapd
+iproute2
+iputils-ping
+nftables
+
     Configuration.
 
 Configuration options are in hap4mb.conf.
@@ -56,3 +66,11 @@ at github.
 
 Thanks,
 Steven
+
+2024-08-02  Original release.
+
+2024-08-05  Wait max 10 seconds for IPv4 address on upstream link.
+            Change periodical ping to use default route.
+
+2024-08-09  Change to hide password in hostapd conf temp file.
+

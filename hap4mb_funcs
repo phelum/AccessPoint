@@ -144,10 +144,20 @@ function check_link_iface ()
   {
     local IFACE=$1
     local IFACE_MAC="$(get_iface_mac ${LINK_IFACE})"
+    local TICKER=0
 
     #   Upstream link must have an address or we're stuffed.  This is because the upstream
     #   interface is declared "dhcp".  If it was "manual" and the bridge was "dhcp" we would
     #   get the allocated address later on (assuming we're going to have the bridge).
+    #   Sometimes post-up occurs before the interface has an IPv4 address so
+    #   we'll stall for a bit if required.
+
+    while true ; do
+      ifconfig ${LINK_IFACE} | grep -q ' inet ' && break
+      (( (TICKER += 1) > 10 )) && break
+      ps -C dhclient || dhclient ${LINK_IFACE}
+      sleep 1
+    done
 
     ifconfig ${LINK_IFACE} | grep -q ' inet ' || \
     { echo "${LINK_IFACE} is not ready"; finish 1; }

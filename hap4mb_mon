@@ -111,7 +111,7 @@
 
       if (( PING_SECS > 0 )) ; then
         if (( (SECONDS += 2) > PING_SECS )) ; then
-          ping -c1 -I${LINK_IFACE} ${PING_DEST} > /dev/null
+          ping -c1 ${PING_DEST} > /dev/null
           (( SECONDS = 2 ))
         fi
       fi
