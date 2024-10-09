@@ -16,24 +16,38 @@
     DEST='2406:3400:202:8991:5278:b3ff:feab:334d'
     echo "Ping target = ${DEST}"
 
-#    ncat 220.233.12.1 80 > /dev/null &
-#    TELNET_PID=$!
-
     COUNT=0
-    while true ; do
-#      ps ${TELNET_PID} > /dev/null || break
-      ping -c1 -I${IFACE} ${DEST} > /dev/null
-      [ $? != 0 ] && break
+    ERRORS=0
+    RETRIES=0
+    echo "Start at $(date +'%F %T')"
+
+#   if the interface disappears it's hopeless so we give up.
+#   ping error 1 happens when no reply, we try 5 times before giving up.
+#   ping error 2 happens when network is unreachable,
+#   this happens when lease expires, down and up fixes this hopefully.
+
+    while [ -e /sys/class/net/${IFACE} ] ; do
+      ping -c1 -W5 -I${IFACE} ${DEST} > /dev/null
+      ERC=$?
+      if [ ${ERC} != 0 ] ; then
+        (( ERRORS += 1 ))
+        (( RETRIES += 1 ))
+        echo "ping error ${RETRIES}, erc = ${ERC}"
+        [ "${ERC}" = "2" ] && { ifdown ${IFACE}; ifup ${IFACE}; }
+        (( RETRIES < 6 )) && continue
+        break
+      fi
       (( COUNT += 1 ))
-      echo -e -n "\rcount = ${COUNT} "
-      sleep 60
+      RETRIES=0
+      echo -e -n "\rcount = ${COUNT}, errors = ${ERRORS}  "
+      sleep 10
     done
 
-#    ps ${TELNET_PID} > /dev/null && kill ${TELNET_PID}
-
+    echo "Stop at $(date +'%F %T')"
     echo ""
     ifconfig ${IFACE}
     [ "{$NEED_UP}" = "1" ] && ifdown ${IFACE}
-    echo "pings = ${COUNT}"
+    echo "pings = ${COUNT}, fails = ${ERRORS}"
 
     exit
+

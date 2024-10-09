@@ -28,6 +28,7 @@ hostapd
 iproute2
 iputils-ping
 nftables
+setsid
 
     Configuration.
 
@@ -69,8 +70,46 @@ Steven
 
 2024-08-02  Original release.
 
-2024-08-05  Wait max 10 seconds for IPv4 address on upstream link.
-            Change periodical ping to use default route.
+2024-08-05
+    Wait max 10 seconds for IPv4 address on upstream link.
+    Change periodical ping to use default route.
 
-2024-08-09  Change to hide password in hostapd conf temp file.
+2024-08-09
+    Change to hide password in hostapd conf temp file.
+
+2024-08-31
+    Changed route entries to enable access of access point
+    and stations on Wi-Fi LAN.
+
+2024-09-01
+    Changed mon4hap so link interfaces are tried before
+    defaulting to station mode.
+
+    The /etc/rc.local patch to start this monitor is:
+    setsid -f /usr/local/bin/mon4hap > /var/log/mon.log
+
+    /etc/network/interfaces must contain an iface called manual
+    that is "inet manual" and specifies the "wpa-conf", e.g.
+    iface manual inet manual
+    wpa-conf    /wpa/all.conf
+
+    To minimise startup time the wifi interface should be:
+    allow-hotplug
+    iface <wifi name> inet manual
+    wpa-conf <desired conf file>
+
+2024-09-02
+    Added mon4hap.conf so interface details don't have
+    to be modified in mon4hap.
+
+2024-09-27
+    Improved mon4hap so system correctly changes from host
+    to AP mode each time the upstream dongle is inserted and
+    reverts to host mode when the dongle is removed.  Problem
+    was that status file used by ifup is not updated when an
+    enabled dongle is removed.
+
+2024-10-10
+    Changed mon4hap so dhclient for wifi not started when no carrier.
+    Previous approach (testA && testB || action) didn't work.
 

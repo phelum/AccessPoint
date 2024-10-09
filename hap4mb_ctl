@@ -113,15 +113,16 @@ function finish ()
     ip route rep default dev ${LINK_IFACE} via ${LINK_ROUTER} onlink
 
     #   If not using dnsmasq we change WLAN_IPS for use in the nftables.
-    #   Also we delete the route entry for the link interface as this
-    #   removal enables remote access to this station.
+    #   Also we change the route entry for LAN stations and add a specific
+    #   entry for the router so it's not included in the LAN range entry.
 
     if [ "${HAP_DNSMASQ}" != "1" ] ; then
       LEN="$(IP4_mask2len ${LINK_SUBNET_MASK})"
       CIDR="${LINK_ADDRESS}/${LEN}"
       FIRST="$(IP4_cidr2first ${CIDR})"
       WLAN_IPS="${FIRST}/${LEN}"
-      ip route del ${WLAN_IPS}
+      ip route rep ${WLAN_IPS} dev ${DHCP_IFACE}
+      ip route add ${LINK_ROUTER} dev ${LINK_IFACE}
     fi
 
     #   nftables helps with monitoring and masquerading.
