@@ -1,0 +1,275 @@
+#!/bin/bash
+
+    # This monitors our network interfaces and starts the access
+    # point interface if found.  If no such device the downstream
+    # interface is started.
+
+    # LINK_IFACES is the list of possible upstream interfaces for hap4mb.
+    # These should be set with no auto or allow-hotplug and
+    # the pre-up, post-up, and post-down stanzas included.
+
+    # WIFI_IFACE is our downstream interface and also how we connect
+    # to a network when not in access point mode.  The iface
+    # details must be setup as below so we can use ifup which
+    # fires up wpa_supplicant as required.
+
+    # The /etc/rc.local patch to start this monitor is:
+    # setsid -f /usr/local/bin/mon4hap > /var/log/mon.log
+
+    # /etc/network/interfaces must contain an iface called manual
+    # that is "inet manual" and specifies the "wpa-conf", e.g.
+    # iface manual inet manual
+    # wpa-conf    /wpa/all.conf
+
+    # To minimise startup time the wifi interface should be:
+    # #allow-hotplug
+    # iface <wifi name> inet manual
+    # wpa-conf <desired conf file>
+
+      # defaults.
+
+    WIFI_IFACE="wifi"
+    MANUAL_IFACE="manual"
+    LINK_IFACES="usb0"
+    NET_DIR="/sys/class/net"
+    IFSTATE_FILE="/var/run/network/ifstate"
+    SLEEP_TIME=10
+    DEBUG_MODE=$( [ "$1" != "-d" ] ; echo $? )
+    OUR_GREP_TEST="ifquery \${IFACE} | grep -qE \"setsid .*hap4mb_mon\"; echo \$?"
+    HAP_MON_PROG="/usr/local/bin/hap4mb_mon"
+    HAP_LOG_FID="/var/log/hap4mb.log"
+
+      # get configuration.
+
+    OUR_PATH="${0%\/*}"
+    [ "${OUR_PATH:0:1}" = "." ] && OUR_PATH="$(pwd)${OUR_PATH:1}"
+    source ${OUR_PATH}/mon4hap.conf || { echo "reqd file missing"; exit 1; }
+
+      # Remember when we've started/stopped an interface.
+
+    HAP_IFACE=""
+    DOWNED_IFACE=""
+
+      # Displays when debug mode.  Strange reverse logic with return statement
+      # because (( test )) returns 1 for true and 0 for false and then this is
+      # loaded into $? where 1 = error, 0 = good.
+
+function debug ()
+  {
+    [ "${DEBUG_MODE}" = "1" ] && (( $# > 0 )) && echo "$@"
+    return $(( DEBUG_MODE == 0 ))
+  }
+
+      # Get interface state.
+
+function GetOperstate ()
+  {
+    local IFACE=$1
+    local STATE="down"
+
+    [ "${IFACE}" != "" ]                         && \
+    [ -e         ${NET_DIR}/${IFACE}/operstate ] && \
+    STATE="$(cat ${NET_DIR}/${IFACE}/operstate)"
+    echo -n "${STATE}"
+    return
+  }
+
+      # Kill any dhclient runs for interface.
+
+function Killall_dhclient ()
+  {
+    local IFACE=$1
+    local PIDS
+
+    PIDS=$(ps -fC dhclient | grep -E " ${IFACE}\$" | awk '{print $2;}')
+    debug "dhclient PIDS for ${IFACE} = ${PIDS}"
+    for PID in ${PIDS} ; do
+      kill -9 "${PID}"
+    done
+
+    return 0
+  }
+
+      # Enable an interface.
+
+function DoIfaceUp ()
+  {
+    local IFACE=$1
+    local CONFIG=$2
+
+    (( $# < 2 )) &&  CONFIG=${IFACE}
+    Killall_dhclient ${IFACE}
+    echo "" >        ${IFSTATE_FILE}.${IFACE}
+    ifup             ${IFACE}=${CONFIG}
+
+    return $?
+  }
+
+      # Disable an interface.
+
+function DoIfaceDown ()
+  {
+    local IFACE=$1
+
+    ifdown           ${IFACE}
+    Killall_dhclient ${IFACE}
+
+    return $?
+  }
+
+      # Enable upstream interface.  We kill any old dhclient runs
+      # and run extras before and after the ifup if required.  We
+      # remember the interface so we can react to any changes.
+
+function StartHapIface ()
+ {
+    local IFACE=$1
+    local EXTRAS_REQD
+
+    [ "$(GetOperstate ${WIFI_IFACE})" != "down" ] && \
+    DoIfaceDown ${WIFI_IFACE}
+
+    debug "grep test = ${OUR_GREP_TEST}"
+    EXTRAS_REQD="$(eval ${OUR_GREP_TEST})"
+    debug "EXTRAS_REQD = ${EXTRAS_REQD}"
+
+    if [ ${EXTRAS_REQD} = 1 ] ; then
+      export IFACE
+      export PHASE="pre-up"
+      ${HAP_MON_PROG}
+    fi
+
+    if DoIfaceUp ${IFACE} ; then
+      HAP_IFACE="${IFACE}"
+      DOWNED_IFACE=""
+      if [ ${EXTRAS_REQD} = 1 ] ; then
+        export PHASE="post-up"
+        debug || setsid -f ${HAP_MON_PROG} >> ${HAP_LOG_FID}
+        debug && setsid -f ${HAP_MON_PROG}
+        echo "HAP_IFACE = ${HAP_IFACE}"
+      fi
+    fi
+
+    return
+ }
+
+      # Kill the session when the upstream interface has been
+      # disabled or removed.
+
+function StopHapIface ()
+ {
+    local IFACE=$1
+    local EXTRAS_REQD
+
+    [ "$(GetOperstate ${IFACE})" != "down" ] && \
+    DoIfaceDown ${IFACE}
+    DOWNED_IFACE="${IFACE}"
+
+    EXTRAS_REQD="$(eval ${OUR_GREP_TEST})"
+    if [ ${EXTRAS_REQD} = 1 ] ; then
+      export IFACE
+      export PHASE="post-down"
+      ${HAP_MON_PROG}
+    fi
+
+    HAP_IFACE=""
+    debug "HAP_IFACE = ${HAP_IFACE}"
+
+    return
+ }
+
+    debug "debug mode active"
+    debug "wlan iface is ${WIFI_IFACE}"
+    debug "link iface list is \"${LINK_IFACES}\""
+
+      # loop for monitoring.
+
+    while [ -e ${NET_DIR}/${WIFI_IFACE} ] ; do
+
+        # If we've started a session and the link has gone
+        # or been disabled we kill the session.
+
+      [ "${HAP_IFACE}" != "" ]                    && \
+      [ "$(GetOperstate ${HAP_IFACE})" = "down" ] && \
+      StopHapIface ${HAP_IFACE}
+
+        # If a session was killed because ifdown was done on
+        # the upstream interface and this interface has now
+        # gone we forget the downing.
+
+      [ "${DOWNED_IFACE}" != "" ]         && \
+      [ ! -e ${NET_DIR}/${DOWNED_IFACE} ] && \
+      DOWNED_IFACE=""
+
+        # If a session was killed because ifdown was done on
+        # the upstream interface and this interface has now
+        # been enabled we ifdown it and forget the downing.
+        # We have to down it so we can up it properly.
+
+      [ "${DOWNED_IFACE}" != "" ]                     && \
+      [ "$(GetOperstate ${DOWNED_IFACE})" != "down" ] && \
+      DoIfaceDown ${DOWNED_IFACE} && \
+      DOWNED_IFACE=""
+
+        # The link interfaces only appear when the device is
+        # detected and processed by a udev rule.  We ignore any
+        # downed interface because there might be another later
+        # in the list.
+
+      LINK_IFACE=${WIFI_IFACE}
+      for WORD in ${LINK_IFACES} ; do
+        [ "${WORD}" = "${DOWNED_IFACE}" ] && continue
+        [ -e ${NET_DIR}/${WORD} ] && LINK_IFACE=${WORD} && break
+      done
+
+        # if LINK_IFACE = WIFI_IFACE, no devices have been found.
+
+      if [ "${LINK_IFACE}" = "${WIFI_IFACE}" ] ; then
+
+          # if wifi down, try ifup.  If we do the up we do a short
+          # sleep then continue so we can do dhclient sooner.  We
+          # use manual method to avoid a dhclient delay until we've
+          # found a network.
+
+        ifconfig ${WIFI_IFACE} | grep 'flags=' | grep -qw 'UP'  || \
+        { DoIfaceUp ${WIFI_IFACE} ${MANUAL_IFACE}; sleep 1; continue; }
+
+          # if carrier but no IPv4 address, try dhclient.
+          # can't use "testA && testB || action" because action will be
+          # done even when testA fails.  So testA has to be a discrete if.
+
+        if [ "$(cat ${NET_DIR}/${WIFI_IFACE}/carrier)" = "1" ] ; then
+          ifconfig ${WIFI_IFACE} | grep -qw 'inet' || \
+          { ps -fC dhclient | grep -qE " ${WIFI_IFACE}\$" || \
+            dhclient -4 -pf /var/run/dhclient.${WIFI_IFACE}.pid ${WIFI_IFACE}; }
+        fi
+
+      else
+
+          # We've found an upstream interface.
+          # If not up, try ifup.  ifup fails if it thinks the interface
+          # is already configured so we clobber its status file which
+          # can still contain data if the device existed and was removed.
+          # If the file is missing, ifup has never been done since run start.
+          # If the file contains the interface name, ifup (only) has been done.
+          # If the file contains LF only, then ifdown has been done after ifup.
+          # When checking here, if a previous session was killed because
+          # someone did an ifdown, we don't start a new session until they've
+          # done an ifup.  If we start a link interface we kill any dhclient
+          # we've started for the wifi interface.
+
+        [ "${HAP_IFACE}" = "" ]                      && \
+        [ "${LINK_IFACE}" != "${DOWNED_IFACE}" ]     && \
+        [ "$(GetOperstate ${LINK_IFACE})" = "down" ] && \
+        StartHapIface    ${LINK_IFACE}               && \
+        Killall_dhclient ${WIFI_IFACE}
+
+      fi
+
+      sleep ${SLEEP_TIME}
+
+    done
+
+    echo "Error: interface \"${WIFI_IFACE}\" doesn't exist"
+
+    exit 1

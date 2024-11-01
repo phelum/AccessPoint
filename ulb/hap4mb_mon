@@ -1,0 +1,131 @@
+#!/bin/bash
+  #     This is started by the interface up event and
+  #     starts the access point script and waits for
+  #     completion which happens when the upstream
+  #     interface disappears (USB device unplugged).
+
+      # ==== Script starts here. ====
+
+      # First we get our real path.
+
+    OUR_PATH="${0%\/*}"
+    [ "${OUR_PATH:0:1}" = "." ] && OUR_PATH="$(pwd)${OUR_PATH:1}"
+
+      # Load functions files.
+
+    source ${OUR_PATH}/bash_ip4.sh  || { echo "reqd file missing"; exit 1; }
+    source ${OUR_PATH}/hap4mb_funcs || { echo "reqd file missing"; exit 1; }
+
+      # Our configuration files.
+
+    HAP_CONF="${OUR_PATH}/hap4mb.conf"
+    source $(ExtractRelevantLines ${HAP_CONF} COMMON)     || exit 1
+    source $(ExtractRelevantLines ${HAP_CONF} HAP4MB_MON) || exit 1
+
+      # IFACE blank means not called by network event.
+      # Removing lock file stops wifi enable and causes
+      # running hap4mb_mon to do a shutdown.
+
+    if [ "${IFACE}" = "" ] ; then
+      [ "$1" = "stop" ] && rm -f ${HAP_LOCK_FID}
+      exit 0
+    fi
+
+      # When upstream interface goes down.
+
+    [ "${PHASE}" = "post-down" ] && { kill_hostapd; exit 0; }
+
+      # When pre-up we adjust the network settings.
+
+    if [ "${PHASE}" = "pre-up" ] ; then
+      source $(ExtractRelevantLines ${HAP_CONF} HAP4MB_NET) || exit 1
+      exit 0
+    fi
+
+      # Should only happen on "ifup" "post-up" event.
+
+    [ "${PHASE}" = "post-up" ] || exit 0
+
+      # Bail if we're already running.  This could happen if we get an
+      # interface up while still processing an interface down.
+
+    ps -C ${HAP_SCRIPT} > /dev/null && \
+    { echo "${HAP_SCRIPT} is already running"; exit 0; }
+
+      # Are we enabled ?
+
+    [ "${MON_ENABLED}" = "1" ] || \
+    { echo "$0 disabled by configuration"; exit 0; }
+
+      # Off we go.  Let's do it.
+
+    echo "==== $0 start $(date +'%F %T')"
+
+      # This file should always exist as absence indicates
+      # a request to halt the system.
+
+    echo "hap4md_mon=$0" > ${HAP_LOCK_FID}
+
+      # Run our controller script.
+
+    export LINK_IFACE
+    export WLAN_IFACE
+    export DHCP_IFACE
+
+    ${HAP_SCRIPT} ${WLAN_SSID} ${WLAN_PASS} &
+    HAP_PID=$!
+    echo "${HAP_SCRIPT} PID = ${HAP_PID}"
+
+      # Our monitor loop while access point script active
+      # Killing hostapd is our way of ending the script.
+
+    FILE="/sys/class/net/${LINK_IFACE}/operstate"
+    [ "${PING_DEST}" = "" ] && PING_SECS=0
+    (( SECONDS = PING_SECS ))
+
+    while ps ${HAP_PID} > /dev/null ; do
+
+      sleep 2
+
+        # Check upstream link still present and active
+
+      [ ! -e ${FILE} ] || [ "$(cat ${FILE})" = "down" ] && kill_hostapd
+
+        # Shutdown by remote user is difficult because it's nice to
+        # close the ssh sessions first but doing this ends the remote
+        # user session and so their script/command can't finish and
+        # invoke the shutdown.  So if the lock file has been removed
+        # it's a sign that shutdown is wanted and so we do it here.
+        # We can because we were started by a network event rather
+        # than a user session.
+
+      if [ ! -e ${HAP_LOCK_FID} ] ; then
+        kill_ssh_sessions
+        kill_hostapd
+      fi
+
+        # Some phones drop the connection if no activity for a while
+        # If enabled, we ping periodically to keep things alive.
+        # Some stupid phones drop after a while anyway.  But we try.
+
+      if (( PING_SECS > 0 )) ; then
+        if (( (SECONDS += 2) > PING_SECS )) ; then
+          ping -c1 ${PING_DEST} > /dev/null
+          (( SECONDS = 2 ))
+        fi
+      fi
+
+    done
+
+    echo "==== $0 end $(date +'%F %T')"
+
+    sync
+
+      # Final check - if no lock file then kill the system.
+
+    [ ! -e ${HAP_LOCK_FID} ] && halt -p
+
+      # Normal exit
+
+    exit 0
+

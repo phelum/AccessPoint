@@ -1,0 +1,10 @@
+#!/bin/bash
+
+    #   If we're running in access point mode we ask the monitor
+    #   to do the shutdown because it can end the user sessions
+    #   before shutting down.
+
+    [ "${UID}" = "0" ] || { echo "Only user root can run this"; exit 1; }
+    ps -C hostapd > /dev/null && { /usr/local/bin/hap4mb_mon stop; exit 0; }
+    sync
+    halt -p

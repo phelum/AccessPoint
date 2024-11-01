@@ -1,0 +1,348 @@
+#!/bin/bash     # Put here so fte knows it's a script file
+
+    #   This file is sourced not executed.
+    #   All these functions get added to the environment.
+
+      # This the standard end probably used by scripts that source us.
+
+function finish ()
+  {
+    ERC=$1
+
+    echo "==== $0 end $(date +'%F %T')"
+    sync
+
+    exit $ERC
+  }
+
+      # Displays when debug mode.  Strange reverse logic with return statement
+      # because (( test )) returns 1 for true and 0 for false and then this is
+      # loaded into $? where 1 = error, 0 = good.
+
+function debug ()
+  {
+    [ "${HAP_DEBUG}" = "1" ] && (( $# > 0 )) && echo "$@"
+    return $(( HAP_DEBUG == 0 ))
+  }
+
+      # This assumes there won't be multiple hostapd running.
+
+function kill_hostapd ()
+  {
+    local   PID=$(ps -C hostapd | grep hostapd | awk '{print $1;}')
+
+    if [ "${PID}" != "" ] ; then
+      echo "hostapd PID = $PID"
+      kill $PID
+      echo "kill result = $?"
+    fi
+
+    return
+  }
+
+      # Get PIDs for all ssh sessions.
+
+function get_ssh_pids ()
+  {
+    echo -n "$( ps ax                     | \
+                grep 'sshd: '             | \
+                grep '@pts/'              | \
+                sed -e 's/^ *//;s/ .*/ /' | \
+                tr -d '\n' )"
+
+    return
+  }
+
+      # Kill sessions so nice closing message is sent.
+
+function kill_ssh_sessions ()
+  {
+    local SSH_PIDS="$(get_ssh_pids)"
+
+#   echo "PIDS = ${SSH_PIDS}"
+    for PID in ${SSH_PIDS} ; do
+#     echo "User PID = ${PID}"
+      kill ${PID}
+    done
+
+    return
+  }
+
+      # This extracts the relevant lines from the source file and
+      # returns the name of the temporary file created.
+
+function ExtractRelevantLines ()
+  {
+    local   SOURCE=$1
+    local   SECTION=$2
+    local   LINES=$(mktemp)
+    local   KEY="[ ${SECTION} ]"
+    local   CURRENT=""
+    local   SECTION_MISSING="1"
+
+    while read ; do
+      if [ "${REPLY:0:1}" = "[" ] ; then
+        CURRENT=${REPLY}
+        [ "${CURRENT}" = "${KEY}" ] && SECTION_MISSING="0"
+        continue
+      fi
+      [ "${CURRENT}" != "${KEY}" ] && continue
+      echo "${REPLY}" >> ${LINES}
+    done < ${SOURCE}
+
+    echo "${LINES}"
+
+    return ${SECTION_MISSING}
+  }
+
+      # Get MAC addr for interface.
+
+function get_iface_mac ()
+  {
+    local IFACE=$1
+
+    echo "$(ifconfig ${IFACE} | grep ' ether' | sed -e 's/^ *ether *//;s/ .*//;')"
+
+    return
+  }
+
+      # get_lease_info finds the last lease for the specified interface and loads
+      # fields for the caller.
+      # We get the address, gateway, and nameserver for the upstream interface.
+
+function get_lease_info ()
+  {
+    local PREFIX=$1
+    local LEASE_FILE=$2
+    local STATE=0
+    declare -n IFACE=${PREFIX}_IFACE
+    declare -n ADDRESS=${PREFIX}_ADDRESS
+    declare -n SUBNET_MASK=${PREFIX}_SUBNET_MASK
+    declare -n ROUTER=${PREFIX}_ROUTER
+    declare -n NAMESERVER=${PREFIX}_NAMESERVER
+
+    while read LINE; do
+      LINE=$(echo "${LINE}" | tr ";\"," " ")
+      WORD=( ${LINE} )
+      [ "${WORD[0]}" = "}" ] && STATE=0
+      [ "${WORD[0]}" = "lease" ] && STATE=1
+      [ "${STATE}" \< "1" ] && continue
+      [ "${WORD[0]}" = "interface" ] && [ "${WORD[1]}" = "${IFACE}" ] && STATE=2
+      [ "${STATE}" \< "2" ] && continue
+      [ "${WORD[0]}" = "fixed-address" ] && ADDRESS="${WORD[1]}"
+      [ "${WORD[0]}" != "option" ] && continue
+      [ "${WORD[1]}" = "subnet-mask" ] && SUBNET_MASK="${WORD[2]}"
+      [ "${WORD[1]}" = "routers" ] && ROUTER="${WORD[2]}"
+      [ "${WORD[1]}" = "domain-name-servers" ] && NAMESERVER="${WORD[2]}"
+    done < ${LEASE_FILE}
+
+    return
+  }
+
+      # Our upstream interface is critical (obviously) so we make sure
+      # it is adequate and also update the ARP table so ip route entries
+      # will be acceptable.
+
+function check_link_iface ()
+  {
+    local IFACE=$1
+    local IFACE_MAC="$(get_iface_mac ${LINK_IFACE})"
+    local TICKER=0
+
+      # Upstream link must have an address or we're stuffed.  This is because the upstream
+      # interface is declared "dhcp".  If it was "manual" and the bridge was "dhcp" we would
+      # get the allocated address later on (assuming we're going to have the bridge).
+      # Sometimes post-up occurs before the interface has an IPv4 address so
+      # we'll stall for a bit if required.
+
+    while true ; do
+      ifconfig ${LINK_IFACE} | grep -q ' inet ' && break
+      (( (TICKER += 1) > 10 )) && break
+      ps -fC dhclient | grep -qE " ${LINK_IFACE}\$" || dhclient ${LINK_IFACE}
+      sleep 1
+    done
+
+    ifconfig ${LINK_IFACE} | grep -q ' inet ' || \
+    { echo "${LINK_IFACE} is not ready"; finish 1; }
+
+      # Must get info for route and dnsmasq nameserver.
+      # Need /usr/sbin/arping (not from iputils-arping) here.
+
+    get_lease_info 'LINK' ${LEASE_FILE}
+    [ "${LINK_ROUTER}" = "" ] && \
+    { echo "no link router address in ${LEASE_FILE}"; finish 1; }
+    LINK_ROUTER_MAC=$(arping -c1 -i${LINK_IFACE} -r ${LINK_ROUTER})
+    debug "MAC from arping = ${LINK_ROUTER_MAC}"
+    [ "${LINK_ROUTER_MAC}" = "" ] && \
+    { echo "Router ${LINK_ROUTER} is not accessible"; finish 1; }
+
+      # Add entry to ARP table so system knows about the station.
+
+    arp -i ${LINK_IFACE} -s ${LINK_ROUTER} ${LINK_ROUTER_MAC}
+
+    debug && arp -n -i${LINK_IFACE}
+
+      # Check the ARP table includes this entry.
+
+    arp -n -i ${LINK_IFACE} | grep -q "${LINK_ROUTER} " || \
+    { echo "Router ${LINK_ROUTER} is not available"; finish 1; }
+
+      # Debug extras.
+
+    if debug ; then
+      echo "Link address =    ${LINK_ADDRESS}"
+      echo "Link netmask =    ${LINK_SUBNET_MASK}"
+      echo "Link router =     ${LINK_ROUTER}"
+      echo "Link nameserver = ${LINK_NAMESERVER}"
+    fi
+
+    return
+  }
+
+      # Create our bridge and add the upstream interface.
+      # This bridge must have an IP address for dnsmasq to work.
+      # This address must be in the dnsmasq DHCP range.
+      # If we're not using dnsmasq we use the upstream IP address.
+
+function setup_bridge ()
+  {
+    brctl addbr          ${DHCP_IFACE}
+    brctl setageing      ${DHCP_IFACE} ${HAP_BRIDGE_AGEING_TIME}
+#   brctl setgcint       ${DHCP_IFACE} ${HAP_BRIDGE_AGEING_TIME}
+    brctl addif          ${DHCP_IFACE} ${LINK_IFACE}
+    if [ "${HAP_DNSMASQ}" = "1" ] ; then
+      ifconfig           ${DHCP_IFACE} ${WLAN_GATEWAY}/32
+    else
+      ifconfig           ${DHCP_IFACE} ${LINK_ADDRESS}/32
+    fi
+    ip link set      dev ${DHCP_IFACE} up
+
+    debug "bridge up done"
+
+    return
+  }
+
+      # Must do this at run end because leaving the bridge
+      # will cause errors with future runs.
+
+function delete_bridge ()
+  {
+    debug "about to down bridge"
+
+    brctl delif     ${DHCP_IFACE} ${LINK_IFACE}
+    ip link set dev ${DHCP_IFACE} down
+    brctl delbr     ${DHCP_IFACE}
+
+    return
+  }
+
+      # nftables is how we request masquerading of all packets going to the upstream
+      # connection.  We specify lots of counters here so we can monitor progress
+      # when trying to get all this to work.
+      # The upstream address is specified by the interface, but how the process
+      # decides to allocate port numbers is a mystery.
+      # if dnsmasq is not enabled, WLAN_IPS is changed to be the range from
+      # the lease from the upstream interface.
+
+function setup_nft ()
+  {
+      # start with default tables.
+    nft -f /etc/nftables.conf
+      # lots of counters here added when trying to get this to work.
+    if debug ; then
+      nft -- add rule  inet filter input   ip saddr ${WLAN_IPS}  counter
+      nft -- add rule  inet filter input   iifname ${WLAN_IFACE} counter
+      nft -- add rule  inet filter input   iifname ${LINK_IFACE} counter
+    fi
+    if [ "${HAP_BRIDGE}" != "1" ] ; then
+      nft -- add rule  inet filter forward ip saddr ${WLAN_IPS}  counter
+      nft -- add rule  inet filter forward iifname ${LINK_IFACE} counter
+    fi
+    if debug ; then
+      nft -- add rule  inet filter output  oifname ${WLAN_IFACE} counter
+      nft -- add rule  inet filter output  oifname ${LINK_IFACE} counter
+    fi
+    if [ "${HAP_MASQUERADE}" = "1" ] ; then
+      nft -- add table inet nat
+      nft -- add chain inet nat prerouting  \
+             '{ type nat hook prerouting  priority filter ; policy accept ; }'
+      if debug ; then
+        nft -- add rule  inet nat prerouting  ip daddr ${WLAN_IPS}  counter
+        nft -- add rule  inet nat prerouting  ip saddr ${WLAN_IPS}  counter
+      fi
+      nft -- add chain inet nat postrouting \
+             '{ type nat hook postrouting priority srcnat ; policy accept ; }'
+      if debug ; then
+        nft -- add rule  inet nat postrouting ip saddr ${WLAN_IPS}  counter
+        nft -- add rule  inet nat postrouting oifname ${LINK_IFACE} counter
+        nft -- add rule  inet nat postrouting counter
+      fi
+        # all packets to upstream must be masqueraded.
+      nft -- add rule  inet nat postrouting oifname ${LINK_IFACE} masquerade
+        # this should masquerade IPv4 but not IPv6.
+#      nft -- add rule  inet nat postrouting ip saddr ${WLAN_IPS} oifname ${LINK_IFACE} masquerade
+        # didn't work as well as line above.
+#     nft -- add rule  inet nat postrouting ip saddr ${WLAN_IPS} masquerade
+    fi
+
+    return
+  }
+
+      # We start dnsmasq with our custom configuration and remember the PID so
+      # we can kill it later.
+
+function start_dnsmasq ()
+  {
+    local CONF
+    local FIRST="$(IP4_cidr2first ${WLAN_IPS} 2)"
+    local  LAST="$(IP4_cidr2last  ${WLAN_IPS} 1)"
+    local  MASK="$(IP4_cidr2mask  ${WLAN_IPS})"
+    local  TIME="12h"
+
+      # need keep-in-foreground to get PID after exec below.
+    CONF="${CONF} --keep-in-foreground"
+      # 0 = no DNS here
+    CONF="${CONF} --port=0"
+    CONF="${CONF} --interface=${DHCP_IFACE}"
+    CONF="${CONF} --dhcp-range=${FIRST},${LAST},${MASK},${TIME}"
+
+    if debug ; then
+      CONF="${CONF} --log-queries"
+      CONF="${CONF} --log-dhcp"
+      CONF="${CONF} --log-debug"
+    fi
+
+      # router address supplied by upstream link
+#   CONF="${CONF} --dhcp-option=option:router,${LINK_ROUTER}"
+      # try forcing ourselves.  If the lease router address is
+      # not in the lease range the client might not set up a
+      # default route (seen on pc206).
+    CONF="${CONF} --dhcp-option=option:router,${WLAN_GATEWAY}"
+
+      # nameserver address supplied by upstream link
+#   CONF="${CONF} --dhcp-option=option:dns-server,${LINK_NAMESERVER}"
+      # try forcing google servers instead
+    CONF="${CONF} --dhcp-option=option:dns-server,8.8.8.8,8.8.4.4"
+
+      # don't get additional nameservers from /etc/resolv.conf
+    CONF="${CONF} --no-resolv"
+      # ignore NetBIOS names.
+    CONF="${CONF} --domain-needed"
+
+      # IPv6.  These mean clients get SLAAC address but we get
+      # no response to any ping (including ipv6.google.com).
+      # Pings from the host device do get responses.
+    CONF="${CONF} --dhcp-range=::,constructor:hap4mb,ra-stateless,ra-names,12h"
+    CONF="${CONF} --enable-ra"
+
+    debug "dnsmasq tail = ${CONF}"
+
+    dnsmasq ${CONF} &
+
+    DNSMASQ_PID=$!
+    echo "dnsmasq = $!"
+
+    return
+  }
+
+
