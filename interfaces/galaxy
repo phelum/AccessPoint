@@ -1,0 +1,8 @@
+
+#		galaxy USB tethering
+
+#allow-hotplug galaxy
+iface galaxy inet dhcp
+    dns-nameservers 8.8.8.8  8.8.4.4
+
+#------------------------------------------------

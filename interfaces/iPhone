@@ -1,0 +1,7 @@
+
+#		iPhone USB tethering
+
+#allow-hotplug iPhone
+iface iPhone inet dhcp
+
+#------------------------------------------------
