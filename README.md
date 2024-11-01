@@ -151,5 +151,3 @@ Steven
     files.
     The example interfaces files are now in the interfaces directory.
     The /usr/local/bin files are now in the ulb directory.
-    
-
