@@ -1,5 +1,0 @@
-#!/bin/sh
-    #   This is meant to be run by hostapd_cli when a station
-    #   connects or disconnects but doesn't seem to work.
-    #   hostapd_cli -a/usr/local/bin/hap4mb_hook -B
-    echo "hostapi_cli report: $@" >> /tmp/hook.log
