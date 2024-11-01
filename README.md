@@ -1,22 +1,46 @@
     hap4mb
 
-Name comes from hostapd for mobile broadband.
+The name comes from hostapd for mobile broadband.  These scripts
+enable the device to be an access point with the upstream link
+via a mobile phone or a mobile broadband dongle.
 
+The main script files are mon4hap, hap4mb_mon, and hap4mb_ctl.
+
+mon4hap monitors the wifi and link interfaces and will start
+the wifi in station mode and then react when an upstream link
+appears.  This occurs when the device is plugged in and udev
+creates the interface file.
+
+hap4mb_mon starts/stops hap4mb_ctl when interfaces change.  This
+means the device will be in wifi station mode until an upstream link
+is enabled.
+
+hap4mb_ctl runs an access point session.  It kills the wifi interface
+and then runs hostapd until a terminating event occurs.
+
+The recommended setup is to start mon4hap at startup (e.g. from
+rc.local) so it can react to interface changes and cause the device
+to either be in wifi station mode or access point mode.  The rc.local
+command is "setsid -f /usr/local/bin/mon4hap > /var/log/mon4hap.log".
+For testing it would be better to start mon4hap manually (perhaps with
+the "-d" switch) and view the screen output.
 
     Installation.
 
-All the hap* files and bash_ip4.sh should be in /usr/local/bin.
-Customising hap4mb.conf is required for your network details
-and interfaces.
+All the /ulb files and bash_ip4.sh should be in /usr/local/bin.
+Customising mon4hap.conf and hap4mb.conf will be required for your
+network details and interfaces.
 
 The eth1 and usb0 files are from my network interfaces.
 Obviously they will require customising for other machines.
 Which interface gets created for the dongle depends on the dongle.
 Smart dongles with DHCP server capability often appear as eth*
 devices while simpler devices (e.g. dumbphones) appear as usb*.
-Both these interfaces should be "allow-hotplug".
-The key change is that pre-up, post-up, and post-down call the
-monitor script (/usr/local/bin/hap4mb_mon).
+I now use udev rules so the interfaces are given special names
+based on their MAC address.  This allows entries in the script
+files to enable/disable certain features based on the upstream
+interface name.  These upstream interfaces should not be "auto"
+or "allow-hotplug" as mon4hap will start them as appropriate.
 
 
     Packages Required.
@@ -31,6 +55,8 @@ nftables
 setsid
 
     Configuration.
+
+mon4hap.conf specifies your wifi and dongle interface names.
 
 Configuration options are in hap4mb.conf.
 WLAN_SSID and WLAN_PASS must be loaded to suit the system.
@@ -50,7 +76,8 @@ interfaces is the clue here (check syslog).
 The default log file (/var/log/hap4mb.log) is specified in the
 post-up option in the /etc/network/interfaces entry for the
 upstream interface.  Enabling HAP_DEBUG will considerably increase
-the log output.
+the log output.  If the interface file doesn't include the post-up
+option then mon4hap will use the default.
 
 There is a periodical ping option in the monitor script.  This
 helps keep mobile broadband connections alive when otherwise idle.
@@ -86,7 +113,7 @@ Steven
     defaulting to station mode.
 
     The /etc/rc.local patch to start this monitor is:
-    setsid -f /usr/local/bin/mon4hap > /var/log/mon.log
+    setsid -f /usr/local/bin/mon4hap > /var/log/mon4hap.log
 
     /etc/network/interfaces must contain an iface called manual
     that is "inet manual" and specifies the "wpa-conf", e.g.
@@ -94,7 +121,7 @@ Steven
     wpa-conf    /wpa/all.conf
 
     To minimise startup time the wifi interface should be:
-    allow-hotplug
+    #allow-hotplug
     iface <wifi name> inet manual
     wpa-conf <desired conf file>
 
@@ -112,4 +139,14 @@ Steven
 2024-10-10
     Changed mon4hap so dhclient for wifi not started when no carrier.
     Previous approach (testA && testB || action) didn't work.
+    Starting dhclient before a connection is established is pointless.
+
+2024-11-02
+    mon4hap now kills any wifi dhclient when starting an upstream
+    interface.  This stops pointless requests when wifi is in access
+    point mode.
+    mon4hap now check the interfaces files and will run the required
+    pre-up, post-up, and post-down tasks if not mentioned in the
+    interface entry.  This avoids having to modify the interface
+    files.
 

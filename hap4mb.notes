@@ -1,0 +1,51 @@
+Wi-Fi access point for ethernet connection to mobile broadband device.
+----------------------------------------------------------------------
+
+Configuration options are in hap4mb.conf.
+Although bridge mode is an option it should always be selected.
+
+If you need dnsmasq here you probably need masquerade as well.
+If the upstream host is a DCHP server you probably don't need either.
+
+If you need Samba to work here then smb.conf must either allow
+all interfaces or at least have the relevant interfaces listed
+in the bind-interfaces list.  nmbd complaining about no network
+interfaces is the clue here (check syslog).
+
+#   [ -e /sbin/resolvconf ] && /sbin/resolvconf --enable-updates # rejected on pc222
+    echo -n 1 > /proc/sys/net/ipv4/conf/${LINK_IFACE}/forwarding
+    echo -n 0 > /proc/sys/net/ipv6/conf/${LINK_IFACE}/forwarding
+    echo -n 2 > /proc/sys/net/ipv6/conf/${LINK_IFACE}/accept_ra
+
+    #   Testing for better IPv6 operation
+    #   N.B. https://www.kernel.org/doc/html/latest/networking/ip-sysctl.html
+    #        says fowarding should be applied to all not to one interface.
+    #   ip_forward means the kernel will check the route table.
+    #   route entry - proto kernel means the kernel inserted this route.
+    #               - via x.x.x.x means who to send packet to (ARP used to get MAC addr for IP).
+    #               - without via how can kernel know what MAC to use ?
+    #               - without via dest IP must exist on dest interface.
+    #               - src x.x.x.x means the packet source IP will be changed to x.x.x.x.
+    #               - with "src" how can replies get back to original source ?
+    #               - if no "src" the packet IP addr will be left as is.
+    #   /conf/all -      affects all interfaces.
+    #   /conf/default -  defaults for future interfaces.
+    #   /conf/${IFACE} - affects ${IFACE} only.
+
+    #   Setting ip_forward sets forwarding in all ipv4 interfaces.
+    #   This should be done in /etc/sysctl.conf.
+    echo -n 1 > /proc/sys/net/ipv4/ip_forward
+#   echo -n 1 > /proc/sys/net/ipv4/conf/all/forwarding
+
+    #   Setting all/forwarding sets forwarding in all ipv6 interfaces.
+    #   But setting stops ipv6 interfaces from getting the ipv6 prefix.
+    #   Setting all/accept_ra=2 doesn't help.
+    #   Maybe everything should be set before any interfaces are started.
+    echo -n 1 > /proc/sys/net/ipv6/conf/all/forwarding
+    echo -n 2 > /proc/sys/net/ipv6/conf/${LINK_IFACE}/accept_ra
+    echo -n 1 > /proc/sys/net/ipv6/conf/${LINK_IFACE}/accept_ra_defrtr
+    echo -n 60 > /proc/sys/net/ipv6/conf/${LINK_IFACE}/router_solicitation_max_interval
+    echo -n 2 > /proc/sys/net/ipv6/conf/all/accept_ra
+    echo -n 1 > /proc/sys/net/ipv6/conf/all/accept_ra_defrtr
+    echo -n 60 > /proc/sys/net/ipv6/conf/all/router_solicitation_max_interval
+
