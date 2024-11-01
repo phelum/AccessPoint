@@ -149,4 +149,7 @@ Steven
     pre-up, post-up, and post-down tasks if not mentioned in the
     interface entry.  This avoids having to modify the interface
     files.
+    The example interfaces files are now in the interfaces directory.
+    The /usr/local/bin files are now in the ulb directory.
+    
 
