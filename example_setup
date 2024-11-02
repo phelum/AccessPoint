@@ -1,0 +1,215 @@
+    Here are the settings from one of my installations:
+
+    root@RP227:/etc/network/interfaces.d# cat galaxy
+
+    #               galaxy USB tethering
+
+    #allow-hotplug galaxy
+    iface galaxy inet dhcp
+        dns-nameservers 8.8.8.8  8.8.4.4
+    #------------------------------------------------
+
+    root@RP227:/etc/network/interfaces.d# cat iPhone
+
+    #               iPhone USB tethering
+
+    #allow-hotplug iPhone
+    iface iPhone inet dhcp
+        dns-nameservers 8.8.8.8  8.8.4.4
+    #------------------------------------------------
+
+    root@RP227:/etc/network/interfaces.d# cat wifi
+
+    #       wlan0 is renamed wifi by udev rule.
+
+    allow-hotplug wifi
+    iface wifi inet manual
+        dns-nameservers 8.8.8.8  8.8.4.4
+        pre-up          change_mac_addr 02:27
+        wpa-conf        /etc/wpa/all.conf
+        post-up         iw ${IFACE} set power_save off
+    #iface wifi inet6 auto
+
+    iface manual inet manual inherits wifi
+    #------------------------------------------------
+
+    root@RP227:/etc/udev/rules.d# cat 70-sjs-net.rules
+    SUBSYSTEM!="net", GOTO="post_net"
+    ACTION!="add", GOTO="post_net_add"
+
+    #   RP227 wifi
+    ATTR{address}=="b8:27:eb:3a:55:9c", NAME="wifi"
+
+    #   Optus E3372 mobile broadband modem
+    ATTR{address}=="ba:ab:be:34:00:00", NAME="eth0"
+
+    #   iPhone SE
+    ATTR{address}=="a2:d7:95:70:75:e8", NAME="iPhone"
+
+    #   iPhone 11
+    ATTR{address}=="4e:7c:d9:c9:5b:4f", NAME="iPhone"
+
+    #   Samsung Galaxy S7
+    ATTR{address}=="02:09:0b:0a:34:32", NAME="galaxy"
+
+    #   Samsung Galaxy S9
+    ATTR{address}=="02:56:66:6b:35:35", NAME="galaxy"
+
+    LABEL="post_net_add"
+    LABEL="post_net"
+    #------------------------------------------------
+
+    /etc/rc.local
+      # Enable interfaces as required.
+    setsid -f /usr/local/bin/mon4hap > /var/log/mon.log
+    #------------------------------------------------
+
+    root@RP227:/usr/local/bin# cat hap4mb.conf
+    #!/bin/bash     # Put here so fte knows it's a script file
+
+    #   This file is parsed by hap4mb_mon and hap4mb_ctl.
+    #   The callers must load OUR_PATH.
+
+    [ COMMON ]
+
+    #   Values used by all.
+
+        HAP_SCRIPT="${OUR_PATH}/hap4mb_ctl"
+        HAP_LOCK_FID="${HAP_SCRIPT}.lock"
+
+    [ HAP4MB_MON ]
+
+    #   Default values for hap4mb_mon variables.
+
+        MON_ENABLED=1
+
+        WLAN_SSID="?????????"
+        WLAN_PASS="????????"
+    #    WLAN_SSID="????????"
+    #    WLAN_PASS="????????"
+
+        LINK_IFACE=${IFACE}
+        WLAN_IFACE=wifi
+        DHCP_IFACE=hap4mb
+        PING_SECS="60"
+        PING_DEST="google.com"
+
+    [ HAP4MB_CTL ]
+
+    #   Default values for hap4mb_ctl variables.
+
+        [ "${LINK_IFACE}" = "" ] && LINK_IFACE=$3
+        [ "${LINK_IFACE}" = "" ] && LINK_IFACE=usb0
+        [ "${WLAN_IFACE}" = "" ] && WLAN_IFACE=wlan0
+        [ "${DHCP_IFACE}" = "" ] && DHCP_IFACE=hap4mb
+        [ "${WLAN_SSID}"  = "" ] && WLAN_SSID=$1
+        [ "${WLAN_PASS}"  = "" ] && WLAN_PASS=$2
+        [ "${WLAN_SSID}"  = "" ] && WLAN_SSID="mynetwork"
+        [ "${WLAN_PASS}"  = "" ] && WLAN_PASS="mypassword"
+
+        WLAN_IPS=192.168.100.0/27
+        WLAN_DHCP_SERVER=${WLAN_IPS%.*}.0
+        WLAN_GATEWAY=${WLAN_IPS%.*}.1
+        DNSMASQ_PID=
+        LEASE_FILE="/var/lib/dhcp/dhclient.${LINK_IFACE}.leases"
+        LINK_ADDRESS="unknown"
+        LINK_SUBNET_MASK="unknown"
+        LINK_ROUTER="unknown"
+        LINK_ROUTER_MAC="unknown"
+        LINK_NAMESERVER="unknown"
+        OLD_DEFAULT_ROUTE=""
+
+        HAP_DEBUG=1
+        HAP_BRIDGE=1
+        HAP_BRIDGE_AGEING_TIME=5
+        # iPhone appears as eth1 and MASQ must be disabled.
+        HAP_DNSMASQ=0
+        HAP_MASQUERADE=0
+        # MASQ stuff was needed for Opel phone that appears as usb0.
+        if [[ "${LINK_IFACE}" =~ usb* ]] ; then
+          HAP_DNSMASQ=1
+          HAP_MASQUERADE=1
+        fi
+        # Galaxy S9 appears as usb0 and MASQ must be disabled.
+        HAP_DNSMASQ=0
+        HAP_MASQUERADE=0
+
+    [ HOSTAPD ]
+
+    #   Skeleton configuration for hostapd.
+    #   We append this to our network specific details.
+
+    driver=nl80211
+
+    logger_syslog=-1
+    logger_syslog_level=2
+    logger_stdout=-1
+    logger_stdout_level=2
+    #debug=4
+    ctrl_interface=/var/run/hostapd
+    ctrl_interface_group=0
+
+    country_code=AU
+    ieee80211d=1
+    hw_mode=g
+    channel=7
+
+    beacon_int=100
+    dtim_period=2
+    max_num_sta=16
+    rts_threshold=2347
+    fragm_threshold=2346
+
+    ignore_broadcast_ssid=0
+    macaddr_acl=0
+    auth_algs=3
+    wpa=2
+    wpa_key_mgmt=WPA-PSK
+    wpa_pairwise=CCMP
+    rsn_pairwise=CCMP
+
+    ieee80211n=1
+    wme_enabled=1
+    ht_capab=[HT20]
+
+    ieee8021x=1
+    #	eapol version 2 causes problems with some stations.
+    #	symptom is lack of reply when authenticating.
+    #eapol_version=2
+    eapol_version=1
+    #eapol_key_index_workaround=1
+    eap_server=1
+
+    #wme_enabled=0
+
+    [ HAP4MB_NET ]
+
+    #   Our network changes.
+
+          echo -n 1 > /proc/sys/net/ipv4/ip_forward
+          echo -n 1 > /proc/sys/net/ipv4/conf/${IFACE}/forwarding
+
+        #   Setting forwarding stops RA acceptance unless accept_ra=2.
+        #   This must be done before the interface is raised.
+        #   Setting /conf/all/* should affect all known interfaces.
+        #   Setting /conf/default/* should affect all future interfaces.
+        #   Setting via /etc/sysctl.conf should work because the file
+        #   gets processed by rcS/procps before the networking script.
+        #   But it didn't seem to work properly so the more reliable
+        #   approach is to set interfaces individually here.
+          echo -n 1 >  /proc/sys/net/ipv6/conf/${IFACE}/forwarding
+          echo -n 2 >  /proc/sys/net/ipv6/conf/${IFACE}/accept_ra
+          echo -n 1 >  /proc/sys/net/ipv6/conf/${IFACE}/accept_ra_defrtr
+          echo -n 1 >  /proc/sys/net/ipv6/conf/${IFACE}/accept_ra_pinfo
+          echo -n 64 > /proc/sys/net/ipv6/conf/${IFACE}/accept_ra_rt_info_max_plen
+          echo -n 60 > /proc/sys/net/ipv6/conf/${IFACE}/router_solicitation_max_interval
+    #------------------------------------------------
+
+    root@RP227:/usr/local/bin# cat mon4hap.conf
+          # Specify Wi-Fi interface, manual configuration,
+          # and interfaces for upstream devices.
+        WIFI_IFACE="wifi"
+        MANUAL_IFACE="manual"
+        LINK_IFACES="eth0 galaxy iPhone usb0"
+    #------------------------------------------------
+
