@@ -145,7 +145,7 @@ Steven
     mon4hap now kills any wifi dhclient when starting an upstream
     interface.  This stops pointless requests when wifi is in access
     point mode.
-    mon4hap now check the interfaces files and will run the required
+    mon4hap now checks the interfaces files and will run the required
     pre-up, post-up, and post-down tasks if not mentioned in the
     interface entry.  This avoids having to modify the interface
     files.
