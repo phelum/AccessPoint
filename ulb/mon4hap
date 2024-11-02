@@ -39,7 +39,7 @@
     HAP_MON_PROG="/usr/local/bin/hap4mb_mon"
     HAP_LOG_FID="/var/log/hap4mb.log"
 
-      # get configuration.
+      # get configuration (allows override of above defaults).
 
     OUR_PATH="${0%\/*}"
     [ "${OUR_PATH:0:1}" = "." ] && OUR_PATH="$(pwd)${OUR_PATH:1}"
@@ -75,16 +75,17 @@ function GetOperstate ()
   }
 
       # Kill any dhclient runs for interface.
+      # Must use -fwwC here to avoid line truncation.
 
 function Killall_dhclient ()
   {
     local IFACE=$1
     local PIDS
 
-    PIDS=$(ps -fC dhclient | grep -E " ${IFACE}\$" | awk '{print $2;}')
+    PIDS=$(ps -fwwC dhclient | grep -E " ${IFACE}\$" | awk '{print $2;}')
     debug "dhclient PIDS for ${IFACE} = ${PIDS}"
     for PID in ${PIDS} ; do
-      kill -9 "${PID}"
+      kill ${PID}
     done
 
     return 0
@@ -173,7 +174,7 @@ function StopHapIface ()
     fi
 
     HAP_IFACE=""
-    debug "HAP_IFACE = ${HAP_IFACE}"
+    echo "HAP_IFACE = <none>"
 
     return
  }
@@ -204,7 +205,7 @@ function StopHapIface ()
         # If a session was killed because ifdown was done on
         # the upstream interface and this interface has now
         # been enabled we ifdown it and forget the downing.
-        # We have to down it so we can up it properly.
+        # We have to ifdown it so we can ifup it properly.
 
       [ "${DOWNED_IFACE}" != "" ]                     && \
       [ "$(GetOperstate ${DOWNED_IFACE})" != "down" ] && \
@@ -240,7 +241,7 @@ function StopHapIface ()
 
         if [ "$(cat ${NET_DIR}/${WIFI_IFACE}/carrier)" = "1" ] ; then
           ifconfig ${WIFI_IFACE} | grep -qw 'inet' || \
-          { ps -fC dhclient | grep -qE " ${WIFI_IFACE}\$" || \
+          { ps -fwwC dhclient | grep -qE " ${WIFI_IFACE}\$" || \
             dhclient -4 -pf /var/run/dhclient.${WIFI_IFACE}.pid ${WIFI_IFACE}; }
         fi
 
